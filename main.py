@@ -1,22 +1,25 @@
-# Python için örnek kod (main.py)
 import os
 import json
 import requests
+from flask import Flask, request
+
+# Flask uygulamasını başlatma
+app = Flask(__name__)
 
 # WhatsApp Business API ayarları
 WHATSAPP_API_URL = "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages"
-# Güvenlik için bu token'ı ortam değişkenlerinde saklayın.
 WHATSAPP_ACCESS_TOKEN = os.environ.get('WHATSAPP_ACCESS_TOKEN')
 HEDEF_NUMARA = "449999999999" # Mesajları yönlendirmek istediğiniz numara
 
-def whatsapp_webhook(request):
+# Ana rota tanımı
+@app.route('/whatsapp_webhook', methods=['GET', 'POST'])
+def whatsapp_webhook():
     # WhatsApp'ın doğrulama isteğini işleme (ilk kurulum için gereklidir)
     if request.method == 'GET':
         mode = request.args.get('hub.mode')
         token = request.args.get('hub.verify_token')
         challenge = request.args.get('hub.challenge')
 
-        # 'YOUR_VERIFY_TOKEN' yerine kendi belirlediğiniz token'ı koyun
         if mode == 'subscribe' and token == 'YOUR_VERIFY_TOKEN':
             print('Webhook doğrulandı!')
             return challenge, 200
@@ -36,7 +39,6 @@ def whatsapp_webhook(request):
 
                 print(f"Gelen mesaj: {mesaj_icerigi} - Gönderen: {gonderen_numara}")
 
-                # Yönlendirme mesajını oluşturma
                 yonlendirme_mesaji = {
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",
@@ -47,7 +49,6 @@ def whatsapp_webhook(request):
                     }
                 }
 
-                # WhatsApp API'ye mesajı gönderme
                 headers = {
                     'Authorization': f'Bearer {WHATSAPP_ACCESS_TOKEN}',
                     'Content-Type': 'application/json'
@@ -61,3 +62,7 @@ def whatsapp_webhook(request):
         except Exception as e:
             print(f'Hata oluştu: {e}')
             return 'Hata', 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
