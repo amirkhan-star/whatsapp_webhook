@@ -1,3 +1,4 @@
 requests
 gunicorn
 Flask
+google-cloud-secret-manager==2.19.0
