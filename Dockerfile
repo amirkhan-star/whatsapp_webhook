@@ -17,4 +17,7 @@ ENV PORT 8080
 
 # Container başladığında çalıştırılacak komut.
 # Flask'in kendi sunucusu geliştirme içindir, bu yüzden production için gunicorn kullanılır.
-CMD ["gunicorn", "--bind", f"0.0.0.0:{PORT}", "main:app"]
+# ... (Dockerfile'ın üst kısımları) ...
+
+# Cloud Run'ın bize verdiği PORT'u kullan
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "main:app"]
