@@ -1,68 +1,95 @@
 import os
 import json
 import requests
-from flask import Flask, request
+from flask import Flask, request, Response
 
-# Flask uygulamasını başlatma
+# Ortam değişkenlerini alıyoruz. Google Cloud'da ayarladığınız isimlerle aynı olmalı.
+VERIFY_TOKEN = os.environ.get('VERIFY_TOKEN')
+WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
+RECIPIENT_NUMBER = os.environ.get('RECIPIENT_NUMBER')
+PHONE_NUMBER_ID = os.environ.get('PHONE_NUMBER_ID')
+
+# Flask uygulamasını başlatıyoruz. Cloud Functions bunu arka planda kullanır.
 app = Flask(__name__)
 
-# WhatsApp Business API ayarları
-WHATSAPP_API_URL = "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages"
-WHATSAPP_ACCESS_TOKEN = os.environ.get('WHATSAPP_ACCESS_TOKEN')
-HEDEF_NUMARA = "449999999999" # Mesajları yönlendirmek istediğiniz numara
-
-# Ana rota tanımı
-@app.route('/whatsapp_webhook', methods=['GET', 'POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def whatsapp_webhook():
-    # WhatsApp'ın doğrulama isteğini işleme (ilk kurulum için gereklidir)
+    """
+    Bu fonksiyon hem WhatsApp webhook doğrulamasını yapar (GET)
+    hem de gelen mesajları alıp yönlendirir (POST).
+    """
     if request.method == 'GET':
-        mode = request.args.get('hub.mode')
-        token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
+        # Bu blok, Meta'nın webhook URL'nizi doğrulaması içindir.
+        # Meta for Developers paneline webhook'u eklediğinizde çalışır.
+        if request.args.get('hub.verify_token') == VERIFY_TOKEN:
+            return request.args.get('hub.challenge'), 200
+        else:
+            return 'Error, wrong validation token', 403
 
-        if mode == 'subscribe' and token == 'YOUR_VERIFY_TOKEN':
-            print('Webhook doğrulandı!')
-            return challenge, 200
-        return 'Doğrulama başarısız.', 403
-
-    # Gelen mesaj verisini işleme
     if request.method == 'POST':
+        # Bu blok, WhatsApp'tan gelen mesajları işler.
         try:
             data = request.get_json()
-            entry = data['entry'][0]
-            if 'changes' in entry and entry['changes'][0]['value']['messages']:
-                messages = entry['changes'][0]['value']['messages']
-                incoming_message = messages[0]
-
-                gonderen_numara = incoming_message['from']
-                mesaj_icerigi = incoming_message['text']['body']
-
-                print(f"Gelen mesaj: {mesaj_icerigi} - Gönderen: {gonderen_numara}")
-
-                yonlendirme_mesaji = {
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": HEDEF_NUMARA,
-                    "type": "text",
-                    "text": {
-                        "body": f"Gelen Mesaj ({gonderen_numara}): {mesaj_icerigi}"
-                    }
-                }
-
-                headers = {
-                    'Authorization': f'Bearer {WHATSAPP_ACCESS_TOKEN}',
-                    'Content-Type': 'application/json'
-                }
-                response = requests.post(WHATSAPP_API_URL, json=yonlendirme_mesaji, headers=headers)
+            
+            # Gelen verinin bir mesaj içerip içermediğini kontrol et
+            if 'entry' in data and data['entry'][0]['changes'][0]['value'].get('messages'):
+                message = data['entry'][0]['changes'][0]['value']['messages'][0]
                 
-                print('Mesaj başarıyla yönlendirildi:', response.json())
-                return 'OK', 200
-            else:
-                return 'OK', 200
-        except Exception as e:
-            print(f'Hata oluştu: {e}')
-            return 'Hata', 500
+                # Sadece text mesajlarını yönlendir
+                if message['type'] == 'text':
+                    sender_number = message['from']
+                    message_body = message['text']['body']
+                    
+                    # Yönlendirilecek mesajın formatını oluştur
+                    forwarded_message = f"Yeni Mesaj Var:\n\n*Gönderen:* {sender_number}\n*Mesaj:* {message_body}"
+                    
+                    # Mesajı yönlendirme fonksiyonunu çağır
+                    send_whatsapp_message(RECIPIENT_NUMBER, forwarded_message)
+            
+            return 'OK', 200
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+        except Exception as e:
+            print(f"Hata olustu: {e}")
+            # Bir hata olsa bile WhatsApp'a başarılı yanıt dönmek önemlidir,
+            # aksi takdirde size bildirim göndermeyi durdurabilir.
+            return 'Error processing request', 200
+
+def send_whatsapp_message(to_number, message_text):
+    """
+    Belirtilen numaraya WhatsApp mesajı gönderir.
+    """
+    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {
+            "body": message_text
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()  # HTTP hata kodları için exception fırlatır
+        print(f"Mesaj basariyla gonderildi. Status: {response.status_code}, Response: {response.json()}")
+    except requests.exceptions.RequestException as e:
+        print(f"Mesaj gonderilirken hata: {e}")
+
+# Cloud Functions'ın bu uygulamayı çalıştırması için
+# Giriş noktası (Entry Point) olarak bu fonksiyonun adını vermelisiniz.
+# Bu örnekte "Giriş Noktası" = whatsapp_webhook
+def main(request):
+    """
+    Google Cloud Functions için ana giriş noktası.
+    İsteği Flask uygulamasına yönlendirir.
+    """
+    # Cloud Functions ortamı için bir context oluştur
+    with app.request_context(request.environ):
+        # İsteği Flask'in işlemesine izin ver
+        return app.full_dispatch_request()
